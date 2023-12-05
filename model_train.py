@@ -152,6 +152,7 @@ def model_training():
         batch["labels"] = tokenizer(batch[trans_col_name]).input_ids
         return batch
 
+
     @dataclass
     class DataCollatorSpeechSeq2SeqWithPadding:
         processor: Any
@@ -167,7 +168,6 @@ def model_training():
             batch["labels"] = labels
             return batch
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
-
 
 
     # evaluation metrics
@@ -338,6 +338,14 @@ def model_training():
                 os.remove(pytorch_model_path)
             return control
 
+
+    # filter bug labels -- longer than max_label_length (448)
+    max_label_length = model.config.max_length
+    def filter_labels(labels):
+        length = len(tokenizer(labels).input_ids)
+        return 0 < length < max_label_length
+    DS = DS.filter(filter_labels, input_columns=[trans_col_name])
+    
 
     # setup trainer
     train_args = training_args
