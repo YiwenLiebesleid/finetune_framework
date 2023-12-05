@@ -8,37 +8,44 @@
     return: nothing, but will change the frame_config data paths
 """
 from debug_util import debug_prt
-from frame_config import model_config_dic, evaluate_config_dic
-from transformers import WhisperForConditionalGeneration
-from datasets import load_dataset, DatasetDict , Dataset, Audio
-from torch.utils.data import DataLoader
-import torch
 import pandas as pd
 import numpy as np
-import datasets
 from tqdm import tqdm
-import gc
-import os
-import jiwer
+# from frame_config import model_config_dic, evaluate_config_dic
+# from transformers import WhisperForConditionalGeneration
+# from datasets import load_dataset, DatasetDict , Dataset, Audio
+# from torch.utils.data import DataLoader
+# import torch
+# import datasets
+# import gc
+# import os
+# import jiwer
+# import re
 
 
 ### define your methods here
 
-"""
-def udf_prep_data():
+def normalize_utterance(utt):
+    utt = re.sub("[\(\[\<].*?[\)\]\>]+", "", utt)
+    patt = "([^a-zA-Z0-9 '])*"
+    utt = re.sub(patt, "", utt)
+    return utt.strip().upper()
+
+
+def udf_prep_data_old():
 
     ### write codes start
 
     BATCH_SIZE = 32
     OUT_DIR = "/scratch/shared/whitehill/yguan2/active_learning/al_score"
     out_file_dir = "whisper-tiny_score"
-    out_file_name = "ami_dur_score_bak.csv"
+    out_file_name = "ami_DEV_bak.csv"
 
     init_from_hub_path = "openai/whisper-tiny"
     lang = None
     model = WhisperForConditionalGeneration.from_pretrained(init_from_hub_path).cuda()
 
-    DS = load_dataset("edinburghcstr/ami", "ihm", split="train")
+    DS = load_dataset("edinburghcstr/ami", "ihm", split="validation")
     data_remove_cols = ["meeting_id", "audio_id", "microphone_id", "speaker_id"]
     DS = DS.remove_columns(data_remove_cols)
     dur_col = [DS[i]["end_time"] - DS[i]["begin_time"] for i in tqdm(range(len(DS)))]
@@ -86,6 +93,7 @@ def udf_prep_data():
     DATA_ROOT = "/home/yguan2/.cache/huggingface/datasets/downloads/extracted"
     debug_prt(DATA_ROOT, "[DATA] DATA_ROOT")
     for step, batch in enumerate(tqdm(dataloader)):
+        audio_ids = [str(bcount+i) for i in range(len(batch['input_features']))]
         audio_paths = [
             str(dataloader.dataset.data["audio"][bcount+i]["path"]).replace(DATA_ROOT, "$DATAROOT") 
             for i in range(len(batch['input_features']))]
@@ -137,9 +145,10 @@ def udf_prep_data():
 
                 processed_data.extend([
                     {
+                        'audio_id': a_id,
                         'audio': path,
                         'text': ref,
-                        'hyp': hyp,
+                        'hyp': normalize_utterance(hyp),
                         'duration': dur,
                         'ref_norm': r_n,
                         'hyp_norm': h_n,
@@ -147,8 +156,8 @@ def udf_prep_data():
                         'sum_score': ts_s,
                         'wer': wer,
                     }
-                    for ix, (path, ref, hyp, dur, r_n, h_n, ts_m, ts_s, wer) in enumerate(
-                        zip(audio_paths, decoded_labels, decoded_preds, durations, 
+                    for ix, (a_id, path, ref, hyp, dur, r_n, h_n, ts_m, ts_s, wer) in enumerate(
+                        zip(audio_ids, audio_paths, decoded_labels, decoded_preds, durations, 
                             decoded_labels_norm, decoded_preds_norm, 
                             ts_mean, ts_sum, wer_ls)
                     )
@@ -178,7 +187,7 @@ def udf_prep_data():
 
     # model_config_dic["local_dataset_path"] = [train_path, val_path, test_path]
     # evaluate_config_dic["local_dataset_path"] = test_path
-"""
+
 
 
 
@@ -320,21 +329,48 @@ def new_udf_prep_data_2(col_name="ave_score", bounds=[0,0], RS_time=1800, topN_t
     debug_prt(savedata_path, "[DATA][STATUS]: save to csv path")
 
 
-def pseudo_labeling_prep_data(col_name, desired_total):
+def pseudo_labeling_prep_data(col_name, hours=10, lower=-0.13):
+    desired_total = 60*60*hours
+
+    # AMI
     csvdata_path = "/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/ami_with_hyp.csv"
+    # Common Voice
+    # csvdata_path = "/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/commom_voice_PL_norm.csv"
     debug_prt(csvdata_path, "[DATA][STATUS]: read from csv path")
     df = pd.read_csv(csvdata_path)
     debug_prt(col_name, "[DATA] col_name")
 
     if col_name == "wer":
-        # should not taking wer=0 samples (it's cheating)
+        # should not taking wer=0 samples
         df_sliced = df[(df[col_name] > 0)]
         # taking topN samples with smallest WER > 0
         curr_total, i, df_processed = topN(df_sliced, desired_total, col_name, ascending=True)
     elif col_name == "ave_score" or col_name == "sum_score":
         # select those with highest probabilities
         curr_total, i, df_processed = topN(df, desired_total, col_name, ascending=False)
-    
+    elif col_name == "wer_with_0":
+        # take wer >= 0
+        df_sliced = df[(df["wer"] >= 0)]
+        curr_total, i, df_processed = topN(df_sliced, desired_total, "wer", ascending=True)
+    elif col_name == "ave_with_top_dur":
+        # get top ave score, then get the top duration
+        df_sliced = df[(df["ave_score"] > lower)]
+        curr_total, i, df_processed = topN(df_sliced, desired_total, "duration", ascending=False)
+    elif col_name == "wer_0_top_dur":
+        # get WER == 0 samples, then get the top duration
+        df_sliced = df[(df["wer"] == 0)]
+        curr_total, i, df_processed = topN(df_sliced, desired_total, "duration", ascending=False)
+    elif col_name == "RS":
+        # randomly select from pseudo labels
+        curr_total, i, df_processed = RS(df, desired_total)
+    elif col_name == "lambda":
+        # use lambda to filter examples. "lower" here is lambda
+        df_sliced = df[(df["wer"] < lower)]
+        curr_total, i, df_processed = sum(df_sliced["duration"]), len(df_sliced), df_sliced
+    elif col_name == "lambda_RS":
+        df_sliced = df[(df["wer"] < lower)]
+        curr_total, i, df_processed = RS(df_sliced, desired_total)
+
     # rename to make hyp the label
     df_processed = df_processed.rename(columns={
         "text": "text_real",
@@ -347,23 +383,26 @@ def pseudo_labeling_prep_data(col_name, desired_total):
     debug_prt(i, "[DATA] current number")
 
     save_filename = "PL"
-    save_filename = save_filename + f"_{col_name}"
+    save_filename = save_filename + f"_{col_name}_{hours}hours"
+    # AMI
     savedata_path = f"/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/AMI_{save_filename}.csv"
+    # Common Voice
+    # savedata_path = f"/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/PL_CommonVoice/CV_{save_filename}.csv"
     df_processed.to_csv(savedata_path, index=False)
     debug_prt(savedata_path, "[DATA][STATUS]: save to csv path")
 
 
 def udf_prep_data():
-    new_udf_prep_data(
-            prep_option="RS",
-            # col_name="ave_score",
-            col_name="wer",
-            # bounds=[0,0],
-            bounds=[0,1],
-            desired_total=60*60*10,
-            regularize=False,
-            ascending = False
-    )
+    # new_udf_prep_data(
+    #         prep_option="range+RS",
+    #         # col_name="ave_score",
+    #         col_name="wer",
+    #         # bounds=[0,0],
+    #         bounds=[0,0.9999],
+    #         desired_total=60*60*10,
+    #         regularize=False,
+    #         ascending=False
+    # )
     
     # new_udf_prep_data_2(
     #     col_name="wer", 
@@ -373,16 +412,22 @@ def udf_prep_data():
     #     ascending=False
     # )
 
-    # pseudo_labeling_prep_data(col_name="wer", 
-    #                           desired_total=60*60*10)
+    pseudo_labeling_prep_data(col_name="ave_with_top_dur",
+                              hours=5,
+                              lower=-0.1
+                              )
+
+    # udf_prep_data_old()
 
 
 
 if __name__ == "__main__":
-    new_udf_prep_data(
-                        prep_option="range",
-                        col_name="ave_score",
-                        bounds=[0.3,0.7],
-                        desired_total=3600,
-                        regularize=True
-                      )
+    # new_udf_prep_data(
+    #                     prep_option="range",
+    #                     col_name="ave_score",
+    #                     bounds=[0.3,0.7],
+    #                     desired_total=3600,
+    #                     regularize=True
+    #                   )
+    
+    udf_prep_data()
