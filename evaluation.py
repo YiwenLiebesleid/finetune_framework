@@ -161,7 +161,9 @@ def do_evaluation():
     from transformers import WhisperProcessor
     processor = WhisperProcessor.from_pretrained(init_from_hub_path, language=lang, task=task)
     from transformers.models.whisper.english_normalizer import BasicTextNormalizer
-    normalizer = BasicTextNormalizer()
+    normalizer1 = BasicTextNormalizer()
+    from whisper.normalizers import EnglishTextNormalizer
+    normalizer2 = EnglishTextNormalizer()
 
     # define data collator
     def prepare_dataset(batch):
@@ -198,12 +200,14 @@ def do_evaluation():
     do_normalize_eval = evaluate_config_dic["do_normalize_eval"]
     do_isat_normalize = evaluate_config_dic["do_isat_normalize"]
     do_num2words = evaluate_config_dic["do_num2words"]
+    do_english_normalize = evaluate_config_dic["do_english_normalize"]
     max_new_tokens = evaluate_config_dic["max_new_tokens"]
     set_temperature_0 = evaluate_config_dic["set_temperature_0"]
 
     debug_prt(do_normalize_eval, "do_normalize_eval")
     debug_prt(do_isat_normalize, "do_isat_normalize")
     debug_prt(do_num2words, "do_num2words")
+    debug_prt(do_english_normalize, "do_english_normalize")
     debug_prt(max_new_tokens, "max_new_tokens")
     debug_prt(set_temperature_0, "set_temperature_0")
 
@@ -251,11 +255,14 @@ def do_evaluation():
                         decoded_preds = [format_text_for_wer(pred) for pred in decoded_preds]
                         decoded_labels= [format_text_for_wer(label) for label in decoded_labels]
                     if do_normalize_eval:
-                        decoded_preds = [normalizer(pred) for pred in decoded_preds]
-                        decoded_labels= [normalizer(label) for label in decoded_labels]
+                        decoded_preds = [normalizer1(pred) for pred in decoded_preds]
+                        decoded_labels= [normalizer1(label) for label in decoded_labels]
                     if do_num2words:
                         decoded_preds = [process_num2words(pred) for pred in decoded_preds]
                         decoded_labels= [process_num2words(label) for label in decoded_labels]
+                    if do_english_normalize:
+                        decoded_preds = [normalizer2(pred) for pred in decoded_preds]
+                        decoded_labels= [normalizer2(label) for label in decoded_labels]
 
                     asr_results.extend( [
                         {
@@ -305,11 +312,20 @@ def do_evaluation():
         # hyps = res[hypcol].apply(format_text_for_wer)
         refs = res[refcol]
         hyps = res[hypcol]
-        refs = [normalizer(label) for label in refs]
-        hyps = [normalizer(pred) for pred in hyps]
+        if do_english_normalize:
+            refs = [normalizer2(label) for label in refs]
+            hyps = [normalizer2(pred) for pred in hyps]
+        else:
+            refs = [normalizer1(label) for label in refs]
+            hyps = [normalizer1(pred) for pred in hyps]
         if do_num2words:
             hyps = [process_num2words(pred) for pred in hyps]
             refs = [process_num2words(label) for label in refs]
+        
+        # clean 0 references
+        hyps = [hyps[i] for i in range(len(hyps)) if len(refs[i]) > 0]
+        refs = [refs[i] for i in range(len(refs)) if len(refs[i]) > 0]
+
         wer_meas = jiwer.compute_measures(list(refs), list(hyps))
         if not return_alignments:
             # remove alignments 
