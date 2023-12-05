@@ -20,18 +20,20 @@ debug_prt.debug = True
 # stage setup: which stages to go through
 pipeline_stage_setup = {
     "data_preparation" : False,
-    "model_training" : True,
-    "evaluation" : False
+    "model_training" : False,
+    "evaluation" : True
 }
 
 # basic settings for the pipeline
 config_dic = {
     # problem names setup, display in result
-    "problem_name" : "ft_ami_tiny_10h",
+    "problem_name" : "ft_ami_tiny_RS_10h_on_raw_file",
+    # "problem_name" : "ft_cv_tiny_PL_RS_10h",
 
     # wandb setups, to which project and name it'll display
     "wandb_project" : "active_learning",
-    "wandb_name" : "AMI tiny 10h RS 3",
+    "wandb_name" : "AMI tiny RS 10h on raw file",
+    # "wandb_name" : "CV tiny PL RS 10h",
 
     # basic model initialise settings
     # usage: WhisperTokenizer.from_pretrained(init_from_hub_path, language=lang, task=task)
@@ -45,8 +47,8 @@ config_dic = {
     # OUT_DIR_PATH = os.path.join(out_dir_root, problem_suffix)
     "data_root" : "/home/yguan2/.cache/huggingface/datasets/downloads/extracted/",
     "out_dir_root" : "/scratch/shared/whitehill/yguan2/model/",
-    # "problem_suffix" : "al_ft_ami_tiny/baseline_10h/",
-    "problem_suffix" : "al_ft_ami_tiny/baseline_10h_RS_3/",
+    "problem_suffix" : "al_ft_ami_tiny/RS_10h_on_raw_file/",
+    # "problem_suffix" : "al_ft_CV_tiny/PL_RS_10h/",
     
     # data info:
     # the desired sampling rate for model input
@@ -80,8 +82,9 @@ model_config_dic = {
     # when use_exist_dataset is False, then will use local_dataset_path: a csv file
     "use_exist_dataset" : False,
     "exist_dataset_path" : ["edinburghcstr/ami", "ihm"],
-    "local_dataset_train_path" : '/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/AMI_RS_2.csv',
-    # "local_dataset_train_path" : '/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/AMI_range+topN_0_1_wer.csv',
+    # "exist_dataset_path" : ["mozilla-foundation/common_voice_13_0", "en"],
+    "local_dataset_train_path" : '/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/GT_based/AMI_RS_10h.csv',
+    # "local_dataset_train_path" : '/scratch/shared/whitehill/yguan2/active_learning/al_score/whisper-tiny_score/PL_CommonVoice/CV_PL_RS_10hours.csv',
     "local_dataset_val_path" : 'default',
     "val_dataset_name" : "validation",
 
@@ -104,7 +107,7 @@ model_config_dic = {
     # usage: to just use a part of the validation set to validate
     # also set the validate name to your desired set
     "validate_all" : False,
-    "validate_range" : 3000,
+    "validate_range" : 8000,
 
     # evaluation setting
     # usage: set temperature to 0, also automatically set predict_with_generate to False
@@ -113,7 +116,7 @@ model_config_dic = {
     # earlystopping setting
     # usage: trainer add an earlystopping strategy to callbacks
     # set to 0 if don't want to use early stopping
-    "early_stopping_patience" : 18,
+    "early_stopping_patience" : 20,
 }
 
 # training arguments
@@ -130,20 +133,21 @@ training_args = Seq2SeqTrainingArguments(
     warmup_steps = 200,
     logging_steps = 25,
     # max_steps=1500,
-    num_train_epochs = 3,              # total number of training epochs
+    num_train_epochs = 10,              # total number of training epochs
     evaluation_strategy = "steps",
     gradient_checkpointing = True,
     fp16 = True,
     generation_max_length = 112,
-    save_steps = 100,
-    eval_steps = 100,
+    save_steps = 300,
+    eval_steps = 300,
+    metric_for_best_model = "wer",
+    # metric_for_best_model = "eval_loss",
 
     # do *NOT* modify this part
     output_dir = OUT_DIR_PATH,
     predict_with_generate = True if not model_config_dic["set_temperature_0"] else False,
     report_to = ["wandb"],
     load_best_model_at_end = True,
-    metric_for_best_model = "wer",
     greater_is_better = False,
     push_to_hub = False,
     remove_unused_columns = False,
@@ -167,7 +171,7 @@ evaluate_config_dic = {
     # if directly using a pretrained model, set model_dir to that name and model_base_name to ""
     # model_path = os.path.join(model_dir, model_base_name)
     "model_dir" : OUT_DIR_PATH,
-    "model_base_name" : "checkpoint-6500",
+    "model_base_name" : "checkpoint-15300",
     # "model_dir" : "openai/whisper-tiny",
     # "model_base_name" : "",
 
@@ -179,7 +183,8 @@ evaluate_config_dic = {
 
     # evaluation methods
     "do_num2words": False,          # whether or not to spell out numbers
-    "do_normalize_eval" : True,
+    "do_english_normalize" : True,     # do english normalize, if true, should assign normalize to false
+    "do_normalize_eval" : False,
     "do_isat_normalize" : False,
     "max_new_tokens" : 112,
     "set_temperature_0" : True,
