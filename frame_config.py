@@ -241,10 +241,10 @@ def DataSet_from_manifest(csv_path, data_root, wav_col="wav", trans_col="transcr
     ds = Dataset.from_dict(
     {
         "ID": metadf['audio_id'].astype(str),
-        "audio": metadf[wav_col].str.replace('$DATAROOT', data_root, regex=False).astype(str),
+        wav_col: metadf[wav_col].str.replace('$DATAROOT', data_root, regex=False).astype(str),
         config_dic["transcript_col"]: metadf[trans_col].astype(str),
         # "duration": metadf["duration"].astype(float)
     },
     split = split
-    ).cast_column("audio", Audio())
+    ).cast_column(wav_col, Audio())
     return ds
